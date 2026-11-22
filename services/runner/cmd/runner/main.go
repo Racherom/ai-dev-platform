@@ -1,6 +1,7 @@
-// Command runner is the only service that may start containers (spec 0001). The scaffold boots on
-// the sdk, refuses to start unless the engine lists the sandbox runtime, and serves health only;
-// features #5 and #6 add the sandbox and the agent run.
+// Command runner is the only service that may start containers (spec 0001). Only scheduler may
+// call it, with its binding token. The scaffold boots on the sdk, refuses to start unless the
+// engine lists the sandbox runtime, and serves health only; features #5 and #6 add the sandbox and
+// the agent run.
 package main
 
 import (
@@ -52,6 +53,7 @@ func setup(ctx context.Context, m *sdk.Module[config.Config, config.Uses]) (http
 	if err := checkWritable(logsDir); err != nil {
 		return nil, refuse(ctx, m.Log, "run logs dir not writable", err)
 	}
+	// No routes yet: a call with scheduler's token answers 404 until features #5 and #7 add them.
 	return http.NewServeMux(), nil
 }
 

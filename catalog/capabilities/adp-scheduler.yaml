@@ -1,0 +1,10 @@
+# Shaped like ModularPlatform's catalog/capabilities/renderer.yaml (spec 0001, "Secrets and config
+# per service"). Slice 7 registers it with the platform's catalog.
+apiVersion: modular-platform/v1
+kind: Capability
+name: adp-scheduler
+description: "The scheduler's REST contract (contracts/openapi/adp-scheduler.yaml, from the first operation): run state: forge pushes GitHub events and claims GitHub commands."
+fields:
+  url: {type: url, description: Base URL of the service.}
+  token: {type: secret, direction: both, description: Binding token the consumer sends and the provider checks.}
+  ca: {type: certificate, optional: true, description: Root CA that signs the service's certificate.}

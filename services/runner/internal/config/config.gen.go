@@ -61,5 +61,6 @@ var Module = sdk.Declaration[Config, Uses]{
 	Bindings: []sdk.BindingSpec{
 		{Capability: "postgresql", Client: "postgresql", Env: map[string]string{"database": "ADP_DB_NAME", "password_file": "ADP_DB_PASSWORD_FILE", "sslmode": "ADP_DB_SSLMODE", "url": "ADP_DB_URL", "user": "ADP_DB_USER"}, Open: pg.Open},
 	},
-	New: func(v *sdk.Values, b *sdk.Bindings) (Config, Uses) { return Config{v}, Uses{b} },
+	Provides: &sdk.ProvideSpec{Capability: "runner", Auth: "binding-token", ClientsDirEnv: "ADP_CLIENTS_DIR"},
+	New:      func(v *sdk.Values, b *sdk.Bindings) (Config, Uses) { return Config{v}, Uses{b} },
 }

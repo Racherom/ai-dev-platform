@@ -1,0 +1,6 @@
+# Every image builds from the repo root (spec 0001, Images); only the Go sources go in.
+*
+!libs/
+!services/
+**/*_test.go
+**/Dockerfile

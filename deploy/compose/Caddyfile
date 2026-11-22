@@ -16,11 +16,11 @@
 		request_body {
 			max_size 1MB
 		}
-		reverse_proxy control:8080
+		reverse_proxy forge:8080
 	}
 
 	handle /healthz {
-		reverse_proxy control:8080
+		reverse_proxy forge:8080
 	}
 
 	handle {

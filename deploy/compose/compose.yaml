@@ -1,5 +1,8 @@
 # The AI Dev Platform stack (spec 0001). Run `task setup` once (it writes .env and secrets/),
 # then `task up`. Only caddy publishes host ports; everything else talks on internal networks.
+#
+# Start order follows the binding graph (forge uses scheduler uses runner), providers first:
+# postgres -> provision -> <service>-migrate -> runner -> scheduler -> forge -> caddy.
 name: adp
 
 x-hardened: &hardened
@@ -8,11 +11,33 @@ x-hardened: &hardened
   security_opt: ["no-new-privileges:true"]
   tmpfs: [/tmp]
 
+# Every service reaches only its own database, with its own login. No credential in the URL.
 x-db: &db
   ADP_DB_URL: postgres://postgres:5432
-  ADP_DB_NAME: adp
   ADP_DB_PASSWORD_FILE: /run/secrets/db_password
   ADP_DB_SSLMODE: disable
+
+# The plain env each <service>-migrate reads (libs/dbmigrate); not a catalog module.
+x-migrate-db: &migrate-db
+  ADP_DB_HOST: postgres
+  ADP_DB_PORT: "5432"
+  ADP_DB_PASSWORD_FILE: /run/secrets/db_password
+
+x-migrate: &migrate
+  <<: *hardened
+  pull_policy: never # each uses the image its service builds
+  entrypoint: ["/app/migrate"]
+  restart: "no"
+  networks: [backend]
+  depends_on:
+    provision:
+      condition: service_completed_successfully
+
+x-healthcheck: &healthcheck
+  interval: 5s
+  timeout: 3s
+  retries: 10
+  start_period: 30s
 
 services:
   postgres:
@@ -20,7 +45,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: adp_owner
-      POSTGRES_DB: adp
+      POSTGRES_DB: postgres # no extra database; provision makes one per service
       POSTGRES_PASSWORD_FILE: /run/secrets/adp_owner_password
     secrets:
       - source: postgres_adp_owner_password
@@ -30,99 +55,171 @@ services:
     networks: [backend]
     healthcheck:
       # over TCP: the image's first init runs a socket only server, which must not count as ready
-      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "adp_owner", "-d", "adp"]
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "adp_owner", "-d", "postgres"]
       interval: 5s
       timeout: 3s
       retries: 10
       start_period: 20s
 
-  migrate:
+  # One shot: a database and a login per service, then exit (deploy/compose/provision.sh).
+  provision:
     <<: *hardened
-    image: adp/control:dev
-    pull_policy: never # built by the control service from the same Dockerfile
-    entrypoint: ["/app/migrate"]
+    image: postgres:18.6-alpine3.24
+    user: "70:70"
+    command: ["sh", "/provision.sh"]
     restart: "no"
     environment:
-      ADP_DB_HOST: postgres
-      ADP_DB_PORT: "5432"
-      ADP_DB_NAME: adp
-      ADP_DB_OWNER_USER: adp_owner
-      ADP_DB_OWNER_PASSWORD_FILE: /run/secrets/adp_owner_password
-      ADP_DB_CONTROL_PASSWORD_FILE: /run/secrets/adp_control_password
-      ADP_DB_RUNNER_PASSWORD_FILE: /run/secrets/adp_runner_password
+      ADP_PROVISION_HOST: postgres
+      ADP_PROVISION_PORT: "5432"
+      ADP_PROVISION_OWNER_USER: adp_owner
+      ADP_PROVISION_OWNER_PASSWORD_FILE: /run/secrets/adp_owner_password
+      ADP_PROVISION_SERVICES: forge scheduler runner
+      ADP_PROVISION_PASSWORD_DIR: /run/secrets
     secrets:
-      - source: migrate_adp_owner_password
+      - source: provision_adp_owner_password
         target: adp_owner_password
-      - source: migrate_adp_control_password
-        target: adp_control_password
-      - source: migrate_adp_runner_password
+      - source: provision_adp_forge_password
+        target: adp_forge_password
+      - source: provision_adp_scheduler_password
+        target: adp_scheduler_password
+      - source: provision_adp_runner_password
         target: adp_runner_password
+    volumes:
+      - ./provision.sh:/provision.sh:ro
     networks: [backend]
     depends_on:
       postgres:
         condition: service_healthy
 
-  control:
-    <<: *hardened
-    build:
-      context: ../../services/control
-    image: adp/control:dev
-    restart: unless-stopped
+  forge-migrate:
+    <<: *migrate
+    image: adp/forge:dev
     environment:
-      <<: *db
-      MP_INSTANCE: control
-      ADP_PUBLIC_ORIGIN: https://${ADP_PUBLIC_HOST:?run task setup first}
-      ADP_PROXY_HOPS: "1"
-      ADP_DB_USER: adp_control
+      <<: *migrate-db
+      ADP_DB_NAME: forge
+      ADP_DB_USER: adp_forge
     secrets:
-      - source: control_db_password
+      - source: forge_db_password
         target: db_password
-    networks: [edge, backend]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD", "/app/control", "healthcheck"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 30s
+
+  scheduler-migrate:
+    <<: *migrate
+    image: adp/scheduler:dev
+    environment:
+      <<: *migrate-db
+      ADP_DB_NAME: scheduler
+      ADP_DB_USER: adp_scheduler
+    secrets:
+      - source: scheduler_db_password
+        target: db_password
+
+  runner-migrate:
+    <<: *migrate
+    image: adp/runner:dev
+    environment:
+      <<: *migrate-db
+      ADP_DB_NAME: runner
+      ADP_DB_USER: adp_runner
+    secrets:
+      - source: runner_db_password
+        target: db_password
 
   runner:
     <<: *hardened
     build:
-      context: ../../services/runner
+      context: ../..
+      dockerfile: services/runner/Dockerfile
     image: adp/runner:dev
     # a refused start (no runsc, proxy not up yet) exits 1; Docker retries with a growing delay
     restart: on-failure
     environment:
       <<: *db
       MP_INSTANCE: runner
+      ADP_DB_NAME: runner
       ADP_DB_USER: adp_runner
+      ADP_CLIENTS_DIR: /run/secrets/clients
       ADP_DOCKER_HOST: tcp://socket-proxy:2375
       ADP_SANDBOX_RUNTIME: runsc
       ADP_RUN_LOGS_DIR: /var/lib/adp/run-logs
     secrets:
       - source: runner_db_password
         target: db_password
+      - source: runner_clients_scheduler
+        target: /run/secrets/clients/scheduler
     volumes:
       - run-logs:/var/lib/adp/run-logs
     networks: [backend, engine]
     depends_on:
-      postgres:
-        condition: service_healthy
-      migrate:
+      runner-migrate:
         condition: service_completed_successfully
       socket-proxy:
         condition: service_healthy
     healthcheck:
+      <<: *healthcheck
       test: ["CMD", "/app/runner", "healthcheck"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 30s
+
+  scheduler:
+    <<: *hardened
+    build:
+      context: ../..
+      dockerfile: services/scheduler/Dockerfile
+    image: adp/scheduler:dev
+    restart: unless-stopped
+    environment:
+      <<: *db
+      MP_INSTANCE: scheduler
+      ADP_DB_NAME: scheduler
+      ADP_DB_USER: adp_scheduler
+      ADP_CLIENTS_DIR: /run/secrets/clients
+      ADP_RUNNER_URL: http://runner:8080
+      ADP_RUNNER_TOKEN_FILE: /run/secrets/runner_token
+    secrets:
+      - source: scheduler_db_password
+        target: db_password
+      - source: scheduler_runner_token
+        target: runner_token
+      - source: scheduler_clients_forge
+        target: /run/secrets/clients/forge
+    networks: [backend]
+    depends_on:
+      scheduler-migrate:
+        condition: service_completed_successfully
+      runner:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "/app/scheduler", "healthcheck"]
+
+  forge:
+    <<: *hardened
+    build:
+      context: ../..
+      dockerfile: services/forge/Dockerfile
+    image: adp/forge:dev
+    restart: unless-stopped
+    environment:
+      <<: *db
+      MP_INSTANCE: forge
+      ADP_DB_NAME: forge
+      ADP_DB_USER: adp_forge
+      ADP_PUBLIC_ORIGIN: https://${ADP_PUBLIC_HOST:?run task setup first}
+      ADP_PROXY_HOPS: "1"
+      ADP_SCHEDULER_URL: http://scheduler:8080
+      ADP_SCHEDULER_TOKEN_FILE: /run/secrets/scheduler_token
+    secrets:
+      - source: forge_db_password
+        target: db_password
+      - source: forge_scheduler_token
+        target: scheduler_token
+    networks: [edge, backend]
+    depends_on:
+      forge-migrate:
+        condition: service_completed_successfully
+      scheduler:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "/app/forge", "healthcheck"]
 
   socket-proxy:
     <<: *hardened
@@ -174,7 +271,7 @@ services:
       - caddy-config:/config
     networks: [edge]
     depends_on:
-      control:
+      forge:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
@@ -195,8 +292,29 @@ services:
       socket-proxy:
         condition: service_healthy
 
+  # `task check-bindings` only (AC-8): a throwaway client on the backend network that holds both
+  # consumer tokens and probes scheduler and runner with each of them
+  binding-check:
+    image: curlimages/curl:8.23.0
+    profiles: [checks]
+    user: "65532:65532"
+    entrypoint: ["/bin/sh", "/check-bindings.sh"]
+    secrets:
+      - source: forge_scheduler_token
+        target: scheduler_token
+      - source: scheduler_runner_token
+        target: runner_token
+    volumes:
+      - ./check-bindings.sh:/check-bindings.sh:ro
+    networks: [backend]
+    depends_on:
+      scheduler:
+        condition: service_healthy
+      runner:
+        condition: service_healthy
+
 networks:
-  # not internal: caddy's ACME traffic and control's way out to api.github.com
+  # not internal: caddy's ACME traffic and forge's way out to api.github.com
   edge: {}
   backend:
     internal: true
@@ -210,17 +328,30 @@ volumes:
   caddy-config: {}
 
 # One file per secret per reading service, made by setup.sh, mode 0400, owned by the reader's
-# uid. Compose ignores uid and mode outside Swarm, so ownership is set on the host.
+# uid. Compose ignores uid and mode outside Swarm, so ownership is set on the host. A value two
+# services share (a password, a binding token) has one file on each side.
 secrets:
   postgres_adp_owner_password:
     file: ../../secrets/postgres/adp_owner_password
-  migrate_adp_owner_password:
-    file: ../../secrets/migrate/adp_owner_password
-  migrate_adp_control_password:
-    file: ../../secrets/migrate/adp_control_password
-  migrate_adp_runner_password:
-    file: ../../secrets/migrate/adp_runner_password
-  control_db_password:
-    file: ../../secrets/control/db_password
+  provision_adp_owner_password:
+    file: ../../secrets/provision/adp_owner_password
+  provision_adp_forge_password:
+    file: ../../secrets/provision/adp_forge_password
+  provision_adp_scheduler_password:
+    file: ../../secrets/provision/adp_scheduler_password
+  provision_adp_runner_password:
+    file: ../../secrets/provision/adp_runner_password
+  forge_db_password:
+    file: ../../secrets/forge/db_password
+  scheduler_db_password:
+    file: ../../secrets/scheduler/db_password
   runner_db_password:
     file: ../../secrets/runner/db_password
+  forge_scheduler_token:
+    file: ../../secrets/forge/scheduler_token
+  scheduler_clients_forge:
+    file: ../../secrets/scheduler/clients/forge
+  scheduler_runner_token:
+    file: ../../secrets/scheduler/runner_token
+  runner_clients_scheduler:
+    file: ../../secrets/runner/clients/scheduler

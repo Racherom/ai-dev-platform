@@ -27,6 +27,9 @@ func fakeEngine(t *testing.T, runtimes string) string {
 	return "tcp://" + strings.TrimPrefix(srv.URL, "http://")
 }
 
+// schedulerToken is scheduler's binding token for runner in these tests.
+const schedulerToken = "scheduler-token-for-runner-0123456789abcd"
+
 func validEnv(t *testing.T, dockerHost string) map[string]string {
 	t.Helper()
 	dir := t.TempDir()
@@ -38,15 +41,23 @@ func validEnv(t *testing.T, dockerHost string) map[string]string {
 	if err := os.Mkdir(logs, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	clients := filepath.Join(dir, "clients")
+	if err := os.Mkdir(clients, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(clients, "scheduler"), []byte(schedulerToken+"\n"), 0o400); err != nil {
+		t.Fatal(err)
+	}
 	return map[string]string{
 		"MP_INSTANCE":          "runner",
 		"ADP_DOCKER_HOST":      dockerHost,
 		"ADP_RUN_LOGS_DIR":     logs,
 		"ADP_DB_URL":           "postgres://127.0.0.1:1",
-		"ADP_DB_NAME":          "adp",
+		"ADP_DB_NAME":          "runner",
 		"ADP_DB_USER":          "adp_runner",
 		"ADP_DB_PASSWORD_FILE": pw,
 		"ADP_DB_SSLMODE":       "disable",
+		"ADP_CLIENTS_DIR":      clients,
 	}
 }
 
@@ -60,16 +71,37 @@ func build(t *testing.T, env map[string]string) (http.Handler, string, error) {
 	return h, logs.String(), err
 }
 
-// AC-6: with runsc listed and a good config, runner boots and serves health.
+// AC-6, AC-8: with runsc listed and a good config, runner boots; health needs no token, every
+// other path needs scheduler's token, and with it an unrouted path answers 404.
 func TestBoots(t *testing.T) {
 	h, logs, err := build(t, validEnv(t, fakeEngine(t, `{"runc":{},"runsc":{}}`)))
 	if err != nil {
 		t.Fatalf("start refused: %v\n%s", err, logs)
 	}
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("/healthz: got %d", rec.Code)
+	cases := []struct {
+		name, path, auth string
+		want             int
+	}{
+		{"health without token", "/healthz", "", http.StatusOK},
+		{"scheduler's token", "/v1/binding-check", "Bearer " + schedulerToken, http.StatusNotFound},
+		{"no token", "/v1/binding-check", "", http.StatusUnauthorized},
+		{"wrong token", "/v1/binding-check", "Bearer " + strings.Repeat("x", 40), http.StatusUnauthorized},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, c.path, nil)
+			if c.auth != "" {
+				req.Header.Set("Authorization", c.auth)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != c.want {
+				t.Errorf("got %d, want %d", rec.Code, c.want)
+			}
+		})
+	}
+	if strings.Contains(logs, schedulerToken) {
+		t.Errorf("the token reached a log line: %s", logs)
 	}
 }
 
@@ -109,6 +141,10 @@ func TestRefusesBadConfig(t *testing.T) {
 		"other scheme": {
 			func(e map[string]string) { e["ADP_DOCKER_HOST"] = "ssh://socket-proxy:2375" },
 			"docker host refused",
+		},
+		"empty clients dir": {
+			func(e map[string]string) { e["ADP_CLIENTS_DIR"] = e["ADP_RUN_LOGS_DIR"] },
+			"config: provides.runner.clients_dir (ADP_CLIENTS_DIR): missing",
 		},
 		"logs dir missing": {
 			func(e map[string]string) { e["ADP_RUN_LOGS_DIR"] = "/nonexistent/run-logs" },
