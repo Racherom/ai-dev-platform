@@ -1,0 +1,40 @@
+apiVersion: modular-platform/v1
+kind: Module
+name: runner
+description: Starts each agent run in a gVisor sandbox and records its outcome.
+# built on the host by `task build` (spec 0001, Images); Slice 7 decides how images reach the platform
+image: adp/runner:dev
+runtime: sdk
+healthcheck:
+  test: ["CMD", "/app/runner", "healthcheck"]
+  interval: 5s
+  timeout: 3s
+  retries: 10
+  start_period: 30s
+uses:
+  postgresql:
+    capability: postgresql
+    client: postgresql
+    env:
+      url: ADP_DB_URL
+      database: ADP_DB_NAME
+      user: ADP_DB_USER
+      password: ADP_DB_PASSWORD_FILE
+      sslmode: ADP_DB_SSLMODE
+config:
+  docker-host:
+    env: ADP_DOCKER_HOST
+    type: url
+    description: Address of the Docker socket proxy, like tcp://socket-proxy:2375; never the raw socket.
+  sandbox-runtime:
+    env: ADP_SANDBOX_RUNTIME
+    type: enum
+    values: [runsc]
+    default: runsc
+    description: The OCI runtime every sandbox starts with; runner refuses to start without it.
+  run-logs-dir:
+    env: ADP_RUN_LOGS_DIR
+    type: string
+    default: /var/lib/adp/run-logs
+    pattern: "/.*"
+    description: Absolute folder on the run-logs volume where each run's log file lands.

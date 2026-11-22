@@ -1,0 +1,29 @@
+# The one public door (spec 0001, "Public address and HTTPS"). A real DNS name gets a Let's
+# Encrypt certificate; localhost or a private name gets Caddy's internal CA.
+{
+	admin 127.0.0.1:2019
+	skip_install_trust
+	servers {
+		protocols h1 h2
+	}
+}
+
+{$ADP_PUBLIC_HOST} {
+	handle /webhooks/github {
+		@notpost not method POST
+		header @notpost Allow POST
+		respond @notpost 405
+		request_body {
+			max_size 1MB
+		}
+		reverse_proxy control:8080
+	}
+
+	handle /healthz {
+		reverse_proxy control:8080
+	}
+
+	handle {
+		respond 404
+	}
+}

@@ -1,0 +1,8 @@
+# secrets live on the host only (spec 0001)
+/secrets/
+/deploy/compose/.env
+
+# agent skills are restored from skills-lock.json (task skills)
+/.claude/skills/
+# editor settings
+/.obsidian/

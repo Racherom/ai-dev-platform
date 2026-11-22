@@ -1,0 +1,64 @@
+# Entry points for the AI Dev Platform (spec 0001). Install Task (https://taskfile.dev), Go 1.26 or
+# newer (go.work pins the toolchain it fetches), and Docker with the Compose plugin and gVisor (runsc).
+# Lint, format, hooks and CI come with feature #2.
+version: "3"
+
+vars:
+  COMPOSE: docker compose -f deploy/compose/compose.yaml
+  GO_PACKAGES: ./services/control/... ./services/runner/...
+
+tasks:
+  default:
+    cmds:
+      - task --list
+
+  setup:
+    desc: One time host setup with sudo; checks runsc, writes deploy/compose/.env and secrets/
+    cmds:
+      - sudo --preserve-env=ADP_PUBLIC_HOST deploy/compose/setup.sh
+
+  generate:
+    desc: Regenerate the sdk config getters from the catalog entries (the output is committed)
+    cmds:
+      - go generate ./services/control/internal/config ./services/runner/internal/config
+
+  build:
+    desc: Build the control and runner images on this host
+    cmds:
+      - "{{.COMPOSE}} build"
+
+  test:
+    desc: Run the Go tests with the race detector
+    cmds:
+      - go test -race {{.GO_PACKAGES}}
+
+  up:
+    desc: Start the stack and wait until every service is healthy
+    cmds:
+      - "{{.COMPOSE}} up -d --wait --wait-timeout 180"
+
+  down:
+    desc: Stop the stack (volumes and secrets stay)
+    cmds:
+      - "{{.COMPOSE}} down"
+
+  ps:
+    desc: Show each service and its health
+    cmds:
+      - "{{.COMPOSE}} ps -a"
+
+  logs:
+    desc: Follow the stack's logs
+    cmds:
+      - "{{.COMPOSE}} logs -f"
+
+  check-proxy:
+    desc: Probe the socket proxy allowlist from a throwaway client (AC-3)
+    cmds:
+      # --use-aliases: the proxy allows clients by name, and `run` registers none without it
+      - "{{.COMPOSE}} --profile checks run --rm --use-aliases --quiet-pull proxy-check"
+
+  check-secrets:
+    desc: Look for leaked secrets and check secret file modes, with sudo (AC-5)
+    cmds:
+      - sudo deploy/compose/check-secrets.sh
