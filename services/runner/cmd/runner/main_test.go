@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/racherom/modular-platform/sdk"
@@ -61,9 +62,28 @@ func validEnv(t *testing.T, dockerHost string) map[string]string {
 	}
 }
 
+// syncBuffer is a bytes.Buffer safe for concurrent use. sdk.Build starts a readiness poll per
+// required binding, and that goroutine logs a warning while the test reads the logs.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 func build(t *testing.T, env map[string]string) (http.Handler, string, error) {
 	t.Helper()
-	var logs bytes.Buffer
+	var logs syncBuffer
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	h, err := sdk.Build(ctx, config.Module, setup,
