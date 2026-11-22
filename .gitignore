@@ -6,3 +6,8 @@
 /.claude/skills/
 # editor settings
 /.obsidian/
+
+# task checksums
+/.task/
+# agent skills source for task skills
+/.agents/skills/

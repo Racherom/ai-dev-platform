@@ -1,12 +1,19 @@
 # Entry points for the AI Dev Platform (spec 0001). Install Task (https://taskfile.dev), Go 1.26 or
 # newer (go.work pins the toolchain it fetches), and Docker with the Compose plugin and gVisor (runsc).
-# Lint, format, hooks and CI come with feature #2.
 version: "3"
 
 vars:
   COMPOSE: docker compose -f deploy/compose/compose.yaml
   # every module in go.work
   GO_PACKAGES: ./libs/... ./services/forge/... ./services/scheduler/... ./services/runner/...
+  GOLANGCI_LINT_VERSION: v2.15.0
+  LEFTHOOK_VERSION: v2.2.2
+  SKILLS_VERSION: 1.7.6
+  # go run pkg@version builds with the toolchain the tool's module asks for; golangci-lint must be
+  # built with at least the toolchain go.work pins, or it refuses the code
+  GO_TOOLCHAIN:
+    sh: go env GOVERSION
+  GOLANGCI_LINT: env GOTOOLCHAIN={{.GO_TOOLCHAIN}} go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}}
 
 tasks:
   default:
@@ -38,6 +45,40 @@ tasks:
     desc: Run the tests behind the integration build tag against a real Postgres (needs Docker)
     cmds:
       - go test -race -tags integration ./libs/...
+
+  lint:
+    desc: Lint and check formatting of the Go code (golangci-lint, .golangci.yml)
+    cmds:
+      - task: lint:go
+
+  lint:go:
+    desc: Run golangci-lint on the Go code, formatters included
+    cmds:
+      - "{{.GOLANGCI_LINT}} run {{.GO_PACKAGES}}"
+
+  fmt:
+    desc: Format the Go code (gofumpt, goimports)
+    cmds:
+      - task: fmt:go
+
+  fmt:go:
+    desc: Format the Go code, or only the files after -- (the pre commit hook passes them)
+    cmds:
+      - "{{.GOLANGCI_LINT}} fmt {{if .CLI_ARGS}}{{.CLI_ARGS}}{{else}}{{.GO_PACKAGES}}{{end}}"
+
+  hooks:
+    desc: Install lefthook {{.LEFTHOOK_VERSION}} into your Go bin directory and the pre commit hook (lefthook.yml)
+    cmds:
+      - go install github.com/evilmartians/lefthook/v2@{{.LEFTHOOK_VERSION}}
+      - gobin="$(go env GOBIN)"; "${gobin:-$(go env GOPATH)/bin}/lefthook" install
+
+  skills:
+    desc: Restore the agent skills in skills-lock.json into .agents/skills and link each into .claude/skills (once per clone; skills {{.SKILLS_VERSION}})
+    cmds:
+      # experimental_install fills only .agents/skills; Claude Code reads .claude/skills, so link each skill there
+      - pnpm dlx skills@{{.SKILLS_VERSION}} experimental_install
+      - mkdir -p .claude/skills
+      - for dir in .agents/skills/*/; do name="$(basename "$dir")"; [ -e ".claude/skills/$name" ] || [ -L ".claude/skills/$name" ] || ln -s "../../.agents/skills/$name" ".claude/skills/$name"; done
 
   up:
     desc: Start the stack and wait until every service is healthy

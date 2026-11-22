@@ -65,7 +65,7 @@ func Load(lookup func(string) (string, bool)) (Settings, error) {
 		s.Port = uint16(port)
 	}
 	if path := need("ADP_DB_PASSWORD_FILE"); path != "" {
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) //nolint:gosec // the path is the operator's own *_FILE setting, as the sdk reads secret files
 		v := strings.TrimRight(string(data), " \t\r\n")
 		switch {
 		case err != nil:
@@ -84,9 +84,8 @@ func Load(lookup func(string) (string, bool)) (Settings, error) {
 func Main(migrations fs.FS) {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	err := func() error {
-		s, err := Load(os.LookupEnv)
+		s, err := Load(os.LookupEnv) //nolint:forbidigo // migrate does not run on the sdk, so it reads its ADP_DB_* settings itself
 		if err != nil {
 			return err
 		}
@@ -97,6 +96,7 @@ func Main(migrations fs.FS) {
 		stop()
 		os.Exit(1)
 	}
+	stop()
 	log.InfoContext(ctx, "migrate done")
 }
 
