@@ -17,6 +17,7 @@ _These are recommendations to keep your build orderly, not requirements. Skip an
 | 3 | Data model | Foundation | planned |
 | 23 | Hardening | Foundation | planned |
 | 24 | Internal Postgres TLS | Release 1 | planned |
+| 26 | Internal service TLS | Release 1 | planned |
 | 4 | GitHub connection & repo onboarding | Release 1 | planned |
 | 5 | Run sandbox | Release 1 | planned |
 | 6 | Claude agent adapter | Release 1 | planned |
@@ -43,7 +44,7 @@ _These are recommendations to keep your build orderly, not requirements. Skip an
 ### 1. Stack & architecture · in-progress
 Decide the services and how they fit together (`control` talks to GitHub and picks the next run, `runner` alone starts sandboxed containers, a one shot `migrate`), leaning on your modular platform's sdk so shared libraries are reused. Scaffold a `docker compose` stack that already follows the platform's conventions (Postgres as a capability binding, secrets delivered as files, one HTTP ingress), so the later move is mostly writing module entries. Admin sign in and the admin web move to #10 and #11.
 **Done when:** the architecture is recorded in a spec, and `task up` boots the empty services behind one ingress with a passing build, on a host where gVisor (`runsc`) is really registered.
-spec [0001](../specs/0001-stack-architecture/index.md) · code in `services/`, `deploy/compose/`, `catalog/`
+spec [0001](../specs/0001-stack-architecture/index.md) · code in `services/`, `libs/`, `deploy/compose/`, `catalog/`
 - [x] Decide the stack (spec): `/architect stack & architecture`
 - [x] Scaffold from the decision: `/develop stack & architecture`
 - [ ] Verify it: `/check verify stack & architecture` (AC-1 still owed on a host with `runsc`)
@@ -74,6 +75,11 @@ The thinnest usable whole. You point the platform at this repo and start a run f
 Encrypt traffic between the services and Postgres on the internal network before the first feature that holds credentials (#4, #5, #12) ships.
 **Done when:** `control`, `runner` and `migrate` connect only over verified TLS, a plain connection is refused, and the certificates come from the stack's own setup with no manual step.
 - [ ] Design it (spec): `/architect internal Postgres TLS`
+
+### 26. Internal service TLS · GA · needs a decision · from spec 0001
+Encrypt the REST calls between services (`forge` to `scheduler`, `scheduler` to `runner`), which carry binding tokens in plain text on the internal networks until now. Builds on #24's certificates.
+**Done when:** every service to service call runs over verified TLS from the stack's own CA, a plain HTTP call is refused, and no manual certificate step is needed.
+- [ ] Design it (spec): `/architect internal service TLS`
 
 ### 4. GitHub connection & repo onboarding · GA · needs a decision
 Connect one GitHub repo with narrowly scoped write access, behind a thin forge interface so GitLab can follow later, and pick up the repo's existing scope, specs and `AGENTS.md`.
