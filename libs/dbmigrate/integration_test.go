@@ -5,6 +5,7 @@ package dbmigrate
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"strconv"
@@ -24,6 +25,87 @@ const postgresImage = "postgres:18.6-alpine3.24"
 // TestRunAsServiceLogin migrates a database the way <service>-migrate does: as a login that owns
 // its database and is no superuser, as provision leaves it. A second run applies nothing.
 func TestRunAsServiceLogin(t *testing.T) {
+	ctx := t.Context()
+	s, ownerURL := newServiceDB(t)
+	migrations := fstest.MapFS{
+		"00001_baseline.sql": {Data: []byte("-- +goose Up\nCREATE TABLE probe (id bigint PRIMARY KEY);\n-- +goose Down\nDROP TABLE probe;\n")},
+	}
+
+	var logs bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logs, nil))
+	if err := Run(ctx, s, migrations, log); err != nil {
+		t.Fatalf("first run: %v\n%s", err, logs.String())
+	}
+	logs.Reset()
+	if err := Run(ctx, s, migrations, log); err != nil {
+		t.Fatalf("second run: %v\n%s", err, logs.String())
+	}
+	if !strings.Contains(logs.String(), `"msg":"goose up","applied":0`) || !strings.Contains(logs.String(), `"msg":"river migrate","applied":0`) {
+		t.Errorf("the second run applied something:\n%s", logs.String())
+	}
+	if strings.Contains(logs.String(), "forge-password") {
+		t.Error("the password reached a log line")
+	}
+
+	// The tables live in forge, owned by adp_forge.
+	q, err := pgx.Connect(ctx, strings.Replace(ownerURL, "/postgres?", "/forge?", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close(context.Background())
+	for _, table := range []string{"goose_db_version", "probe", "river_job", "river_migration"} {
+		var tableOwner string
+		err := q.QueryRow(ctx, "SELECT tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = $1", table).Scan(&tableOwner)
+		if err != nil {
+			t.Errorf("table %s: %v", table, err)
+			continue
+		}
+		if tableOwner != "adp_forge" {
+			t.Errorf("table %s is owned by %s, want adp_forge", table, tableOwner)
+		}
+	}
+}
+
+// TestRequireRiver starts a service against a database its migrate step has not reached yet,
+// then against the same database after migrate ran (feature #23).
+func TestRequireRiver(t *testing.T) {
+	ctx := t.Context()
+	s, _ := newServiceDB(t)
+	pool, err := connect(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	var logs bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logs, nil))
+	err = RequireRiver(ctx, pool, log, "forge-migrate")
+	if !errors.Is(err, ErrRiverBehind) || !errors.Is(err, sdk.ErrStart) {
+		t.Fatalf("before migrate: got %v, want ErrRiverBehind wrapped in sdk.ErrStart", err)
+	}
+	if got := strings.Count(logs.String(), "\n"); got != 1 {
+		t.Errorf("want one log line, got %d:\n%s", got, logs.String())
+	}
+	if !strings.Contains(logs.String(), `"msg":"river schema behind; run forge-migrate first"`) {
+		t.Errorf("the line does not name the step:\n%s", logs.String())
+	}
+
+	if err := Run(ctx, s, fstest.MapFS{}, slog.New(slog.DiscardHandler)); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	logs.Reset()
+	if err := RequireRiver(ctx, pool, log, "forge-migrate"); err != nil {
+		t.Fatalf("after migrate: %v", err)
+	}
+	if logs.Len() != 0 {
+		t.Errorf("a passing check logged:\n%s", logs.String())
+	}
+}
+
+// newServiceDB starts Postgres and makes database forge owned by login adp_forge, the way
+// provision does. It returns the login's settings and the owner's connection URL.
+func newServiceDB(t *testing.T) (Settings, string) {
+	t.Helper()
 	ctx := t.Context()
 	ctr, err := postgres.Run(ctx, postgresImage,
 		postgres.WithDatabase("postgres"),
@@ -65,42 +147,5 @@ func TestRunAsServiceLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := Settings{Host: host, Port: uint16(port), Database: "forge", User: "adp_forge", Password: sdk.NewSecret("forge-password")}
-	migrations := fstest.MapFS{
-		"00001_baseline.sql": {Data: []byte("-- +goose Up\nCREATE TABLE probe (id bigint PRIMARY KEY);\n-- +goose Down\nDROP TABLE probe;\n")},
-	}
-
-	var logs bytes.Buffer
-	log := slog.New(slog.NewJSONHandler(&logs, nil))
-	if err := Run(ctx, s, migrations, log); err != nil {
-		t.Fatalf("first run: %v\n%s", err, logs.String())
-	}
-	logs.Reset()
-	if err := Run(ctx, s, migrations, log); err != nil {
-		t.Fatalf("second run: %v\n%s", err, logs.String())
-	}
-	if !strings.Contains(logs.String(), `"msg":"goose up","applied":0`) || !strings.Contains(logs.String(), `"msg":"river migrate","applied":0`) {
-		t.Errorf("the second run applied something:\n%s", logs.String())
-	}
-	if strings.Contains(logs.String(), "forge-password") {
-		t.Error("the password reached a log line")
-	}
-
-	// The tables live in forge, owned by adp_forge.
-	q, err := pgx.Connect(ctx, strings.Replace(ownerURL, "/postgres?", "/forge?", 1))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer q.Close(context.Background())
-	for _, table := range []string{"goose_db_version", "probe", "river_job", "river_migration"} {
-		var tableOwner string
-		err := q.QueryRow(ctx, "SELECT tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = $1", table).Scan(&tableOwner)
-		if err != nil {
-			t.Errorf("table %s: %v", table, err)
-			continue
-		}
-		if tableOwner != "adp_forge" {
-			t.Errorf("table %s is owned by %s, want adp_forge", table, tableOwner)
-		}
-	}
+	return Settings{Host: host, Port: uint16(port), Database: "forge", User: "adp_forge", Password: sdk.NewSecret("forge-password")}, ownerURL
 }

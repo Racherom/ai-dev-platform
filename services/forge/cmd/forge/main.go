@@ -10,6 +10,7 @@ import (
 
 	"github.com/racherom/modular-platform/sdk"
 
+	"github.com/racherom/ai-dev-platform/libs/dbmigrate"
 	"github.com/racherom/ai-dev-platform/services/forge/internal/config"
 )
 
@@ -24,8 +25,12 @@ func setup(ctx context.Context, m *sdk.Module[config.Config, config.Uses]) (http
 	if _, err := m.Config.ProxyHops(ctx); err != nil {
 		return nil, fmt.Errorf("proxy hops: %w", err)
 	}
-	if _, err := m.Uses.Postgresql(ctx); err != nil {
+	pool, err := m.Uses.Postgresql(ctx)
+	if err != nil {
 		return nil, fmt.Errorf("postgresql: %w", err)
+	}
+	if err := dbmigrate.RequireRiver(ctx, pool, m.Log, "forge-migrate"); err != nil {
+		return nil, err
 	}
 	if _, err := m.Uses.Scheduler(ctx); err != nil {
 		return nil, fmt.Errorf("scheduler: %w", err)

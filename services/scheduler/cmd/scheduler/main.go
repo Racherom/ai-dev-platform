@@ -12,6 +12,7 @@ import (
 
 	"github.com/racherom/modular-platform/sdk"
 
+	"github.com/racherom/ai-dev-platform/libs/dbmigrate"
 	"github.com/racherom/ai-dev-platform/services/scheduler/internal/config"
 )
 
@@ -21,8 +22,12 @@ func main() { sdk.Run(config.Module, setup) }
 // /readyz in front of it and checks forge's binding token on every other path; /readyz waits
 // until Postgres and runner have answered once.
 func setup(ctx context.Context, m *sdk.Module[config.Config, config.Uses]) (http.Handler, error) {
-	if _, err := m.Uses.Postgresql(ctx); err != nil {
+	pool, err := m.Uses.Postgresql(ctx)
+	if err != nil {
 		return nil, fmt.Errorf("postgresql: %w", err)
+	}
+	if err := dbmigrate.RequireRiver(ctx, pool, m.Log, "scheduler-migrate"); err != nil {
+		return nil, err
 	}
 	if _, err := m.Uses.Runner(ctx); err != nil {
 		return nil, fmt.Errorf("runner: %w", err)

@@ -14,6 +14,7 @@ import (
 
 	"github.com/racherom/modular-platform/sdk"
 
+	"github.com/racherom/ai-dev-platform/libs/dbmigrate"
 	"github.com/racherom/ai-dev-platform/services/runner/internal/config"
 	"github.com/racherom/ai-dev-platform/services/runner/internal/sandbox"
 )
@@ -35,8 +36,12 @@ func setup(ctx context.Context, m *sdk.Module[config.Config, config.Uses]) (http
 	if err != nil {
 		return nil, fmt.Errorf("run logs dir: %w", err)
 	}
-	if _, err := m.Uses.Postgresql(ctx); err != nil {
+	pool, err := m.Uses.Postgresql(ctx)
+	if err != nil {
 		return nil, fmt.Errorf("postgresql: %w", err)
+	}
+	if err := dbmigrate.RequireRiver(ctx, pool, m.Log, "runner-migrate"); err != nil {
+		return nil, err
 	}
 
 	engine, err := sandbox.NewEngine(host, nil)

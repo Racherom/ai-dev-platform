@@ -103,19 +103,9 @@ func Main(migrations fs.FS) {
 // Run waits up to 30 seconds for the database, then applies goose up from migrations and River's
 // migrations. A second run applies nothing and succeeds.
 func Run(ctx context.Context, s Settings, migrations fs.FS, log *slog.Logger) error {
-	cfg, err := pgxpool.ParseConfig("")
+	pool, err := connect(ctx, s)
 	if err != nil {
-		return fmt.Errorf("pool config: %w", err)
-	}
-	cc := cfg.ConnConfig
-	cc.Host, cc.Port, cc.Database, cc.User = s.Host, s.Port, s.Database, s.User
-	cc.Password = s.Password.Reveal()
-	cc.TLSConfig = nil // internal network, TLS arrives with feature #24
-	cc.Fallbacks = nil
-	cfg.MaxConns = 2
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		return fmt.Errorf("pool: %w", err)
+		return err
 	}
 	defer pool.Close()
 
@@ -126,6 +116,25 @@ func Run(ctx context.Context, s Settings, migrations fs.FS, log *slog.Logger) er
 		return err
 	}
 	return riverUp(ctx, pool, log)
+}
+
+// connect opens a small pool to the database s names. It does not dial until first use.
+func connect(ctx context.Context, s Settings) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig("")
+	if err != nil {
+		return nil, fmt.Errorf("pool config: %w", err)
+	}
+	cc := cfg.ConnConfig
+	cc.Host, cc.Port, cc.Database, cc.User = s.Host, s.Port, s.Database, s.User
+	cc.Password = s.Password.Reveal()
+	cc.TLSConfig = nil // internal network, TLS arrives with feature #24
+	cc.Fallbacks = nil
+	cfg.MaxConns = 2
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("pool: %w", err)
+	}
+	return pool, nil
 }
 
 // waitForDB pings until Postgres answers, since provision may have only just made the database.
