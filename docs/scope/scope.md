@@ -15,7 +15,7 @@ _These are recommendations to keep your build orderly, not requirements. Skip an
 | 1 | Stack & architecture | Foundation | in-progress |
 | 2 | Coding standards & tooling | Foundation | planned |
 | 3 | Data model | Foundation | planned |
-| 23 | Hardening | Foundation | in-progress |
+| 23 | Hardening | Foundation | done |
 | 24 | Internal Postgres TLS | Release 1 | planned |
 | 26 | Internal service TLS | Release 1 | planned |
 | 4 | GitHub connection & repo onboarding | Release 1 | planned |
@@ -62,7 +62,7 @@ Only the entities Release 1 needs: project, repository, task (a runnable box fro
 **Done when:** the entities carry Release 1 end to end, the run result columns `adp_runner` may write and the grants `migrate` applies are named, and later slices (routing, usage, limits) add tables without a breaking migration.
 - [ ] Design it (spec): `/architect data model`
 
-### 23. Hardening · in-progress
+### 23. Hardening · done
 Small fixes the scaffold left behind: align pgx in `runner` with `control` (`v5.13.0`), and have both services check River's schema version at start.
 **Done when:** both modules build with the same pgx version, and a service started before `migrate` caught up stops with one clear line instead of failing later.
 spec [0001](../specs/0001-stack-architecture/index.md) (Follow-up) · code in `libs/dbmigrate/check.go`, `services/*/cmd/*/main.go`
