@@ -5,7 +5,8 @@ version: "3"
 
 vars:
   COMPOSE: docker compose -f deploy/compose/compose.yaml
-  GO_PACKAGES: ./services/control/... ./services/runner/...
+  # every module in go.work
+  GO_PACKAGES: ./libs/... ./services/forge/... ./services/scheduler/... ./services/runner/...
 
 tasks:
   default:
@@ -20,17 +21,23 @@ tasks:
   generate:
     desc: Regenerate the sdk config getters from the catalog entries (the output is committed)
     cmds:
-      - go generate ./services/control/internal/config ./services/runner/internal/config
+      - go generate ./services/forge/internal/config ./services/scheduler/internal/config ./services/runner/internal/config
 
   build:
-    desc: Build the control and runner images on this host
+    desc: Build the forge, scheduler and runner images on this host
     cmds:
       - "{{.COMPOSE}} build"
 
   test:
-    desc: Run the Go tests with the race detector
+    desc: Run the Go tests with the race detector, then the integration tests (they need Docker)
     cmds:
       - go test -race {{.GO_PACKAGES}}
+      - task: test:integration
+
+  test:integration:
+    desc: Run the tests behind the integration build tag against a real Postgres (needs Docker)
+    cmds:
+      - go test -race -tags integration ./libs/...
 
   up:
     desc: Start the stack and wait until every service is healthy
@@ -57,6 +64,11 @@ tasks:
     cmds:
       # --use-aliases: the proxy allows clients by name, and `run` registers none without it
       - "{{.COMPOSE}} --profile checks run --rm --use-aliases --quiet-pull proxy-check"
+
+  check-bindings:
+    desc: Probe scheduler and runner with each binding token from a throwaway client (AC-8)
+    cmds:
+      - "{{.COMPOSE}} --profile checks run --rm --quiet-pull binding-check"
 
   check-secrets:
     desc: Look for leaked secrets and check secret file modes, with sudo (AC-5)

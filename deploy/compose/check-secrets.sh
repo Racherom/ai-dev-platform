@@ -14,13 +14,20 @@ fail=0
 
 [ "$(id -u)" -eq 0 ] || { echo "check-secrets: run me with sudo (task check-secrets)" >&2; exit 1; }
 
+# the 12 files of spec 0001, "Secrets and config per service", and the uid that reads each
 declare -A owner=(
 	[postgres/adp_owner_password]=70
-	[migrate/adp_owner_password]=65532
-	[migrate/adp_control_password]=65532
-	[migrate/adp_runner_password]=65532
-	[control/db_password]=65532
+	[provision/adp_owner_password]=70
+	[provision/adp_forge_password]=70
+	[provision/adp_scheduler_password]=70
+	[provision/adp_runner_password]=70
+	[forge/db_password]=65532
+	[scheduler/db_password]=65532
 	[runner/db_password]=65532
+	[forge/scheduler_token]=65532
+	[scheduler/clients/forge]=65532
+	[scheduler/runner_token]=65532
+	[runner/clients/scheduler]=65532
 )
 
 # 2. mode and owner
@@ -37,7 +44,7 @@ haystack=$(mktemp)
 trap 'rm -f "$haystack"' EXIT
 {
 	echo "== compose config"; "${compose[@]}" config
-	for img in adp/control:dev adp/runner:dev; do
+	for img in adp/forge:dev adp/scheduler:dev adp/runner:dev; do
 		echo "== history $img"; docker history --no-trunc --format '{{.CreatedBy}}' "$img"
 		echo "== image env $img"; docker image inspect --format '{{json .Config.Env}}' "$img"
 	done

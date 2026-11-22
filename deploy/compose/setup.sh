@@ -13,8 +13,8 @@ env_file="$here/.env"
 secrets="$root/secrets"
 
 # container uids that read secrets (spec 0001, "Secrets and config per service")
-PG_UID=70        # postgres:*-alpine
-APP_UID=65532    # distroless nonroot: migrate, control, runner
+PG_UID=70        # postgres:*-alpine: postgres, provision
+APP_UID=65532    # distroless nonroot: forge, scheduler, runner, their migrate steps, binding-check
 
 die() { echo "setup: $*" >&2; exit 1; }
 
@@ -93,11 +93,15 @@ ensure_value() {
 	done
 }
 
-ensure_value "postgres/adp_owner_password:$PG_UID" "migrate/adp_owner_password:$APP_UID"
-ensure_value "migrate/adp_control_password:$APP_UID" "control/db_password:$APP_UID"
-ensure_value "migrate/adp_runner_password:$APP_UID" "runner/db_password:$APP_UID"
+# the owner login, then one login per service, then one token per binding (consumer side first)
+ensure_value "postgres/adp_owner_password:$PG_UID" "provision/adp_owner_password:$PG_UID"
+for svc in forge scheduler runner; do
+	ensure_value "provision/adp_${svc}_password:$PG_UID" "$svc/db_password:$APP_UID"
+done
+ensure_value "forge/scheduler_token:$APP_UID" "scheduler/clients/forge:$APP_UID"
+ensure_value "scheduler/runner_token:$APP_UID" "runner/clients/scheduler:$APP_UID"
 
-# the service folders must be traversable by the daemon only; it mounts the files as root
-for d in "$secrets"/*/; do chmod 0700 "$d"; chown 0:0 "$d"; done
+# every folder must be traversable by the daemon only; it mounts the files as root
+find "$secrets" -type d -exec chown 0:0 {} + -exec chmod 0700 {} +
 
 echo "setup done: ADP_PUBLIC_HOST=$host DOCKER_GID=$docker_gid. Next: task up"
