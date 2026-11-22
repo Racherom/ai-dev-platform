@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"strings"
 	"time"
@@ -23,7 +22,7 @@ var ErrRiverBehind = errors.New("river schema behind")
 // database behind pool. It returns an error wrapping ErrRiverBehind when one is missing, and a
 // plain error when the database cannot be asked.
 func CheckRiver(ctx context.Context, pool *pgxpool.Pool) error {
-	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	quiet := slog.New(slog.DiscardHandler)
 	m, err := rivermigrate.New(riverpgxv5.New(pool), &rivermigrate.Config{Logger: quiet})
 	if err != nil {
 		return fmt.Errorf("river migrator: %w", err)

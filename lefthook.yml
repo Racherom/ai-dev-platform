@@ -1,0 +1,16 @@
+# Pre commit checks: format and lint what you staged; tests stay in CI. Install the hook once
+# with `task hooks`; skip it for one commit with LEFTHOOK=0.
+pre-commit:
+  jobs:
+    - name: go
+      group:
+        piped: true
+        jobs:
+          - name: go format
+            glob: "*.go"
+            run: task fmt:go -- {staged_files}
+            stage_fixed: true
+          # golangci-lint checks whole packages, so it runs on all of them
+          - name: go lint
+            glob: "*.go"
+            run: task lint:go

@@ -13,7 +13,7 @@ _These are recommendations to keep your build orderly, not requirements. Skip an
 | # | Feature | Phase | Status |
 |---|---------|-------|--------|
 | 1 | Stack & architecture | Foundation | in-progress |
-| 2 | Coding standards & tooling | Foundation | planned |
+| 2 | Coding standards & tooling | Foundation | in-progress |
 | 3 | Data model | Foundation | planned |
 | 23 | Hardening | Foundation | done |
 | 24 | Internal Postgres TLS | Release 1 | planned |
@@ -50,11 +50,12 @@ spec [0001](../specs/0001-stack-architecture/index.md) · code in `services/`, `
 - [ ] Verify it: `/check verify stack & architecture` (AC-1 still owed on a host with `runsc`)
 - [ ] Test it: `/test stack & architecture`
 
-### 2. Coding standards & tooling
+### 2. Coding standards & tooling · in-progress
 Capture conventions and tooling from the real scaffold, reusing what already works in your modular platform (task runner, conventional commit PR titles, branch rules), then install lint, format, pre commit hooks and CI.
 **Done when:** root `AGENTS.md` reflects the real stack, and lint, format, pre commit and CI run clean.
+code in `.golangci.yml`, `lefthook.yml`, `Taskfile.yml`, `.github/workflows/`, `scripts/branch-rules.sh`
 - [ ] Capture conventions + tooling choices: `/audit`
-- [ ] Install the tooling: `/develop tooling`
+- [x] Install the tooling: `/develop tooling`
 - [ ] Check it runs clean: `/test`
 
 ### 3. Data model · needs a decision
