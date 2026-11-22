@@ -33,4 +33,8 @@ jobs:
       - run: task lint
       # includes the integration tests, which start Postgres in Docker (preinstalled on the runner)
       - run: task test
+      # compose wants the values task setup writes on a host; the image build uses none of them
       - run: task build
+        env:
+          ADP_PUBLIC_HOST: ci.localhost
+          DOCKER_GID: "999"
