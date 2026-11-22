@@ -39,11 +39,19 @@ Run these on a host with gVisor installed and registered (`docker info --format 
 - [ ] `task generate` then `git diff --exit-code services/*/internal/config` → no diff → AC-7
 - [ ] `task test` → passes: unit tests of every `go.work` module (including `TestProxyAllowlist`, which reads the regexes from `compose.yaml`), then `test:integration` runs `libs/dbmigrate` against a real Postgres → AC-7
 - [ ] `go test -race -run 'TestRefusesBadConfig|TestRefusesWithoutRunsc|TestBindingAuth' ./services/...` → passes: a missing or invalid value gives a `config: <value> (<ENV>): <code>` line → AC-6
-- [ ] With Postgres up and migrated: `docker compose -f deploy/compose/compose.yaml run --rm --no-deps -e ADP_CLIENTS_DIR=/tmp scheduler` (and the same for `runner`) → exits 1 with `config: provides.scheduler.clients_dir (ADP_CLIENTS_DIR): missing` (`provides.runner.…` for runner) → AC-6. _The spec's AC-6 text says `/tmp/empty` and `provides.adp-scheduler…`; a folder that does not exist gives `invalid_binding`, and the sdk names the provide key, not the capability. Owed to `/architect`._
+- [ ] With Postgres up and migrated: `docker compose -f deploy/compose/compose.yaml run --rm --no-deps -e ADP_CLIENTS_DIR=/tmp scheduler` (and the same for `runner`) → exits 1 with `config: provides.scheduler.clients_dir (ADP_CLIENTS_DIR): missing` (`provides.runner.…` for runner) → AC-6.
 
 ### Bindings
 - [ ] `grep -A3 '^uses:' catalog/modules/*/module.yaml` → only `forge` uses `adp-scheduler` and only `scheduler` uses `adp-runner`; no other `uses` but `postgresql` → AC-8
 - [ ] `task check-bindings` (with the stack up) → every line `ok`: scheduler answers 404 to forge's token and 401 to no token, a wrong token and scheduler's own token; runner answers 404 to scheduler's token and 401 to no token, a wrong token and forge's token; `/healthz` 200 on both without a token → AC-8
+
+## Hardening (#23) · added 2026-11-22
+_Steps for scope feature #23, from its Done when and this spec's Follow-up line on River's schema check. Not tied to an AC._
+
+- [ ] `grep -h 'jackc/pgx/v5 ' services/*/go.mod libs/go.mod` → every line says `v5.13.0` → #23 (same pgx)
+- [ ] `go test -race -count=1 -tags integration -run TestRequireRiver ./libs/...` → passes: a fresh database is refused with `river schema behind; run forge-migrate first` wrapped in `sdk.ErrStart`; after migrate the check passes with no log line → #23 (River check)
+- [ ] `go test -race -count=1 -run TestRequireRiverUnreachable ./libs/...` → passes: with Postgres not answering, the start goes on with a `WARN` line, since `/readyz` waits for Postgres → #23 (River check)
+- [ ] On a throwaway stack (this wipes the volumes): `docker compose -f deploy/compose/compose.yaml down -v`, `… up -d --wait postgres`, `… run --rm provision`, then `… run --rm --no-deps scheduler` (scheduler-migrate has not run) → exits 1 with `river schema behind; run scheduler-migrate first`. A following `task up` migrates and every service turns healthy → #23 (River check)
 
 ## Acceptance criteria coverage
 - AC-1: both setup steps, task up, provision and migrate logs, second task up

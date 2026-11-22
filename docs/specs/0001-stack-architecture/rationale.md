@@ -106,6 +106,10 @@ An independent read only review on a different model checked the first version f
 
 A read only review on Sonnet 5.5 checked the revision against the pinned sdk. It confirmed that binding tokens are checked before routing (so 401 vs 404 proves auth with no route) and the clients dir problem path. You applied every recommended fix: long poll `wait` capped at 15 seconds by the sdk's write timeout; `forge` answers 501 on the webhook path so AC-2 can tell it from Caddy; the `binding-check` path, matrix and token mounts; the `provision` env names, marker role and `PGPASSFILE`; a "same value as" column and mount paths for every secret file; the compose build entries and `docker compose up -d --wait`; how AC-2, AC-5 and AC-6 are checked; renderer's `provides` field shape; password rotation only between down and up; readiness following the binding graph; `socket-proxy` in the start order.
 
+## AC-6 wording fix (2026-11-22)
+
+The build's verify run found two slips in AC-6. The sdk names the problem by the provide key in `module.yaml` (`provides.scheduler.clients_dir`), not by the capability (`adp-scheduler`). And `/tmp/empty` does not exist in the image, so the sdk reports `invalid_binding`, not `missing`. AC-6 now uses `/tmp`, an existing empty folder in the distroless image, and the provide key. No decision changed.
+
 ## References
 
 **Project sources**:
